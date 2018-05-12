@@ -7,6 +7,9 @@ import (
     "log"
     "fmt"
     "strconv"
+    "database/sql"
+    _ "github.com/mattn/go-sqlite3"
+
 )
 
 // Book
@@ -27,7 +30,25 @@ var books []Book
 
 func GetBooks(response http.ResponseWriter, request *http.Request) {
     response.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(response).Encode(books)
+    db, err := sql.Open("sqlite3", "file:foo.db?_loc=auto")
+    if err != nil {
+        panic(err)
+    }
+    defer db.Close()
+    const query = `SELECT id,isbn,title from books`
+    selection, err := db.Query(query)
+    if err != nil {
+        panic(err.Error())
+    }
+    result := json.NewEncoder(response)
+    for selection.Next() {
+        var current Book = Book{} 
+        err = selection.Scan(&current.ID, &current.ISBN, &current.Title)
+        if err != nil {
+            panic(err.Error())
+        }
+        result.Encode(current)
+    }
 }
 
 func GetBook(response http.ResponseWriter, request *http.Request) {
@@ -37,15 +58,17 @@ func GetBook(response http.ResponseWriter, request *http.Request) {
     if err != nil {
         return
     }
-    for _, item := range books {
-        if item.ID == int(expectedId) {
-            response.WriteHeader(http.StatusOK)
-            json.NewEncoder(response).Encode(item)
-            return
-        }
+    db, err := sql.Open("sqlite3", "file:foo.db?_loc=auto")
+    if err != nil {
+        panic(err)
     }
-    response.WriteHeader(http.StatusNotFound)
-    json.NewEncoder(response).Encode(&Book{}) 
+    defer db.Close()
+    const query = `SELECT id,isbn,title from books where id = $1 `
+    var retval Book
+    err = db.QueryRow(query, expectedId).Scan(&retval.ID, &retval.ISBN, &retval.Title)
+    json.NewEncoder(response).Encode(retval)
+    // response.WriteHeader(http.StatusNotFound)
+    //json.NewEncoder(response).Encode(&Book{}) 
 }
 
 func GetNextId(books []Book) int {
@@ -72,8 +95,16 @@ func CreateBook(response http.ResponseWriter, request *http.Request) {
     response.Header().Set("Content-Type", "application/json")
     var newBook Book
     _ = json.NewDecoder(request.Body).Decode(&newBook)
-    newBook.ID = GetNextId(books)
-    books = append(books, newBook)
+    db, err := sql.Open("sqlite3", "file:foo.db?_loc=auto")
+    if err != nil {
+        panic(err.Error())
+    }
+    insertion, err := db.Prepare("INSERT INTO books(id, isbn, title) VALUES(?,?,?)")
+    if err != nil {
+        panic(err.Error())
+    }
+    insertion.Exec(&newBook.ID, &newBook.ISBN, &newBook.Title)
+    defer db.Close()
     response.WriteHeader(http.StatusOK)
     json.NewEncoder(response).Encode(newBook)
 }
@@ -118,6 +149,7 @@ func DeleteBook(response http.ResponseWriter, request *http.Request) {
 
 func main() {
     router := mux.NewRouter()
+    
 
     books = append(books, Book{ID: 1, ISBN: "438227", Title: "Book One", Author: &Author{Firstname: "John", Lastname: "Doe"}})
     books = append(books, Book{ID: 2, ISBN: "454555", Title: "Book Two", Author: &Author{Firstname: "Steve", Lastname: "Smith"}})
