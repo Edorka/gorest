@@ -28,15 +28,18 @@ type Author struct {
 
 var books []Book
 
-func GetBooks(response http.ResponseWriter, request *http.Request) {
+type BooksApp struct {
+    Access *sql.DB
+}
+
+func (app *BooksApp) Source(source *sql.DB) {
+    app.Access = source
+}
+
+func (app *BooksApp) List(response http.ResponseWriter, request *http.Request) {
     response.Header().Set("Content-Type", "application/json")
-    db, err := sql.Open("sqlite3", "file:foo.db?_loc=auto")
-    if err != nil {
-        panic(err)
-    }
-    defer db.Close()
     const query = `SELECT id,isbn,title from books`
-    selection, err := db.Query(query)
+    selection, err := app.Access.Query(query)
     if err != nil {
         panic(err.Error())
     }
@@ -91,20 +94,16 @@ func GetPositionById(id int) int {
     return result
 }
 
-func CreateBook(response http.ResponseWriter, request *http.Request) {
+func (app *BooksApp) Create(response http.ResponseWriter, request *http.Request) {
     response.Header().Set("Content-Type", "application/json")
     var newBook Book
     _ = json.NewDecoder(request.Body).Decode(&newBook)
-    db, err := sql.Open("sqlite3", "file:foo.db?_loc=auto")
-    if err != nil {
-        panic(err.Error())
-    }
-    insertion, err := db.Prepare("INSERT INTO books(id, isbn, title) VALUES(?,?,?)")
+    const query = "INSERT INTO books(id, isbn, title) VALUES(?,?,?)"
+    insertion, err := app.Access.Prepare(query)
     if err != nil {
         panic(err.Error())
     }
     insertion.Exec(&newBook.ID, &newBook.ISBN, &newBook.Title)
-    defer db.Close()
     response.WriteHeader(http.StatusOK)
     json.NewEncoder(response).Encode(newBook)
 }
@@ -154,10 +153,16 @@ func main() {
     books = append(books, Book{ID: 1, ISBN: "438227", Title: "Book One", Author: &Author{Firstname: "John", Lastname: "Doe"}})
     books = append(books, Book{ID: 2, ISBN: "454555", Title: "Book Two", Author: &Author{Firstname: "Steve", Lastname: "Smith"}})
 
+    db, err := sql.Open("sqlite3", "file:foo.db?_loc=auto")
+    if err != nil {
+        panic(err)
+    }
+    app := BooksApp{}
+    app.Source(db)
 
-    router.HandleFunc("/api/books", GetBooks).Methods("GET")
+    router.HandleFunc("/api/books", app.List).Methods("GET")
     router.HandleFunc("/api/book/{id}", GetBook).Methods("GET")
-    router.HandleFunc("/api/books", CreateBook).Methods("POST")
+    router.HandleFunc("/api/books", app.Create).Methods("POST")
     router.HandleFunc("/api/book/{id}", UpdateBook).Methods("PUT")
     router.HandleFunc("/api/book/{id}", DeleteBook).Methods("DELETE")
     log.Fatal(http.ListenAndServe(":3000", router))
