@@ -54,44 +54,18 @@ func (app *BooksApp) List(response http.ResponseWriter, request *http.Request) {
     }
 }
 
-func GetBook(response http.ResponseWriter, request *http.Request) {
+func (app *BooksApp) Get(response http.ResponseWriter, request *http.Request) {
     response.Header().Set("Content-Type", "application/json")
     params := mux.Vars(request)
     expectedId, err := strconv.ParseInt(params["id"], 10, 32)
     if err != nil {
-        return
+        panic(err.Error())
     }
-    db, err := sql.Open("sqlite3", "file:foo.db?_loc=auto")
-    if err != nil {
-        panic(err)
-    }
-    defer db.Close()
     const query = `SELECT id,isbn,title from books where id = $1 `
-    var retval Book
-    err = db.QueryRow(query, expectedId).Scan(&retval.ID, &retval.ISBN, &retval.Title)
-    json.NewEncoder(response).Encode(retval)
-    // response.WriteHeader(http.StatusNotFound)
-    //json.NewEncoder(response).Encode(&Book{}) 
-}
-
-func GetNextId(books []Book) int {
-    result := 0
-    for _, item := range books {
-        if result < item.ID {
-            result = item.ID
-        }
-    }
-    return result + 1
-}
-
-func GetPositionById(id int) int {
-    var result int = -1
-    for position, item := range books {
-        if id == item.ID {
-            return position
-        }
-    }
-    return result
+    var result Book = Book{} 
+    err = app.Access.QueryRow(query, expectedId).Scan(&result.ID, &result.ISBN, &result.Title)
+    json.NewEncoder(response).Encode(result)
+    
 }
 
 func (app *BooksApp) Create(response http.ResponseWriter, request *http.Request) {
@@ -108,7 +82,7 @@ func (app *BooksApp) Create(response http.ResponseWriter, request *http.Request)
     json.NewEncoder(response).Encode(newBook)
 }
 
-func UpdateBook(response http.ResponseWriter, request *http.Request) {
+func (app *BooksApp) Update(response http.ResponseWriter, request *http.Request) {
     response.Header().Set("Content-Type", "application/json")
     params := mux.Vars(request)
     expectedId, err := strconv.ParseInt(params["id"], 10, 32)
@@ -116,19 +90,19 @@ func UpdateBook(response http.ResponseWriter, request *http.Request) {
         http.Error(response, fmt.Sprintf( "malformed id: %v", params["id"]), 400)
         return 
     }
-    var position int = GetPositionById(int(expectedId))
-    if position != -1 {
-        json.NewDecoder(request.Body).Decode(&books[position])
-    } else {
-        fmt.Printf("not found :%d\n", expectedId)
-        http.NotFound(response, request)
-        return 
+    const query = "UPDATE books SET isbn=?, title=?  where id = ?"
+    update, err := app.Access.Prepare(query)
+    if err != nil {
+        panic(err.Error())
     }
-    json.NewEncoder(response).Encode(&books[position])
-    return
+    var target Book
+    _ = json.NewDecoder(request.Body).Decode(&target)
+    update.Exec(&target.ISBN, &target.Title, expectedId)
+    response.WriteHeader(http.StatusOK)
+    json.NewEncoder(response).Encode(target)
 }
 
-func DeleteBook(response http.ResponseWriter, request *http.Request) {
+func (app *BooksApp) Delete(response http.ResponseWriter, request *http.Request) {
     response.Header().Set("Content-Type", "application/json")
     params := mux.Vars(request)
     expectedId, err := strconv.ParseInt(params["id"], 10, 32)
@@ -136,14 +110,15 @@ func DeleteBook(response http.ResponseWriter, request *http.Request) {
         http.Error(response, fmt.Sprintf( "malformed id: %v", params["id"]), 400)
         return 
     }
-    var position int = GetPositionById(int(expectedId))
-    if position != -1 {
-        response.WriteHeader(http.StatusOK)
-        books = books[:position+copy(books[position:], books[position+1:])]
-    } else {
-        fmt.Printf("not found :%d\n", expectedId)
-        http.NotFound(response, request)
+    const query = "DELETE FROM books where id = ?"
+    update, err := app.Access.Prepare(query)
+    if err != nil {
+        panic(err.Error())
     }
+    update.Exec(expectedId)
+    response.WriteHeader(http.StatusOK)
+    //       fmt.Printf("not found :%d\n", expectedId)
+    //    http.NotFound(response, request)
 }
 
 func main() {
@@ -161,10 +136,11 @@ func main() {
     app.Source(db)
 
     router.HandleFunc("/api/books", app.List).Methods("GET")
-    router.HandleFunc("/api/book/{id}", GetBook).Methods("GET")
+    router.HandleFunc("/api/book/{id}", app.Get).Methods("GET")
     router.HandleFunc("/api/books", app.Create).Methods("POST")
-    router.HandleFunc("/api/book/{id}", UpdateBook).Methods("PUT")
-    router.HandleFunc("/api/book/{id}", DeleteBook).Methods("DELETE")
+    router.HandleFunc("/api/book/{id}", app.Update).Methods("PUT")
+    router.HandleFunc("/api/book/{id}", app.Delete).Methods("DELETE")
+
     log.Fatal(http.ListenAndServe(":3000", router))
 }
 
