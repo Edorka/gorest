@@ -9,24 +9,10 @@ import (
     "strconv"
     "database/sql"
     _ "github.com/mattn/go-sqlite3"
-
+    "gorest/books"
 )
 
-// Book
 
-type Book struct {
-    ID      int `json:"id"`
-    ISBN    string `json:"isbn"`
-    Title   string `json:"title"`
-    Author  *Author `json:"author"`
-}
-
-type Author struct {
-    Firstname  string `json:"firstname"`
-    Lastname   string `json:"lastname"`
-}
-
-var books []Book
 
 type BooksApp struct {
     Access *sql.DB
@@ -38,14 +24,13 @@ func (app *BooksApp) Source(source *sql.DB) {
 
 func (app *BooksApp) List(response http.ResponseWriter, request *http.Request) {
     response.Header().Set("Content-Type", "application/json")
-    const query = `SELECT id,isbn,title from books`
-    selection, err := app.Access.Query(query)
+    selection, err := books.List(app.Access)
     if err != nil {
         panic(err.Error())
     }
     result := json.NewEncoder(response)
     for selection.Next() {
-        var current Book = Book{} 
+        var current books.Book = books.Book{} 
         err = selection.Scan(&current.ID, &current.ISBN, &current.Title)
         if err != nil {
             panic(err.Error())
@@ -55,31 +40,30 @@ func (app *BooksApp) List(response http.ResponseWriter, request *http.Request) {
 }
 
 func (app *BooksApp) Get(response http.ResponseWriter, request *http.Request) {
+    var expectedId int64
+    var err error
+    var result books.Book
     response.Header().Set("Content-Type", "application/json")
     params := mux.Vars(request)
-    expectedId, err := strconv.ParseInt(params["id"], 10, 32)
+    expectedId, err = strconv.ParseInt(params["id"], 10, 32)
     if err != nil {
         panic(err.Error())
     }
-    const query = `SELECT id,isbn,title from books where id = $1 `
-    var result Book = Book{} 
-    err = app.Access.QueryRow(query, expectedId).Scan(&result.ID, &result.ISBN, &result.Title)
+    result, err = books.Get(app.Access, int(expectedId))
     json.NewEncoder(response).Encode(result)
-    
 }
 
 func (app *BooksApp) Create(response http.ResponseWriter, request *http.Request) {
     response.Header().Set("Content-Type", "application/json")
-    var newBook Book
-    _ = json.NewDecoder(request.Body).Decode(&newBook)
-    const query = "INSERT INTO books(id, isbn, title) VALUES(?,?,?)"
-    insertion, err := app.Access.Prepare(query)
+    var result, newBook books.Book
+    var err error
+    err = json.NewDecoder(request.Body).Decode(&newBook)
     if err != nil {
         panic(err.Error())
     }
-    insertion.Exec(&newBook.ID, &newBook.ISBN, &newBook.Title)
+    result, err = books.Create(app.Access, newBook)
     response.WriteHeader(http.StatusOK)
-    json.NewEncoder(response).Encode(newBook)
+    json.NewEncoder(response).Encode(result)
 }
 
 func (app *BooksApp) Update(response http.ResponseWriter, request *http.Request) {
@@ -90,16 +74,11 @@ func (app *BooksApp) Update(response http.ResponseWriter, request *http.Request)
         http.Error(response, fmt.Sprintf( "malformed id: %v", params["id"]), 400)
         return 
     }
-    const query = "UPDATE books SET isbn=?, title=?  where id = ?"
-    update, err := app.Access.Prepare(query)
-    if err != nil {
-        panic(err.Error())
-    }
-    var target Book
+    var target, result books.Book
     _ = json.NewDecoder(request.Body).Decode(&target)
-    update.Exec(&target.ISBN, &target.Title, expectedId)
+    result, err = books.Update(app.Access, int(expectedId), target)
     response.WriteHeader(http.StatusOK)
-    json.NewEncoder(response).Encode(target)
+    json.NewEncoder(response).Encode(result)
 }
 
 func (app *BooksApp) Delete(response http.ResponseWriter, request *http.Request) {
@@ -110,23 +89,14 @@ func (app *BooksApp) Delete(response http.ResponseWriter, request *http.Request)
         http.Error(response, fmt.Sprintf( "malformed id: %v", params["id"]), 400)
         return 
     }
-    const query = "DELETE FROM books where id = ?"
-    update, err := app.Access.Prepare(query)
-    if err != nil {
-        panic(err.Error())
-    }
-    update.Exec(expectedId)
+    var done bool;
+    done, err = books.Delete(app.Access, int(expectedId))
     response.WriteHeader(http.StatusOK)
-    //       fmt.Printf("not found :%d\n", expectedId)
-    //    http.NotFound(response, request)
+    json.NewEncoder(response).Encode(done)
 }
 
 func main() {
     router := mux.NewRouter()
-    
-
-    books = append(books, Book{ID: 1, ISBN: "438227", Title: "Book One", Author: &Author{Firstname: "John", Lastname: "Doe"}})
-    books = append(books, Book{ID: 2, ISBN: "454555", Title: "Book Two", Author: &Author{Firstname: "Steve", Lastname: "Smith"}})
 
     db, err := sql.Open("sqlite3", "file:foo.db?_loc=auto")
     if err != nil {
